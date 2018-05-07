@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"math/rand"
 	"regexp"
@@ -14,7 +15,9 @@ import (
 var (
 	bot        tgbot.TelegramBot
 	botUser    tgbot.User
-	foresights []string
+	foresights = []string{}
+	userMap    = map[int]int{}
+	lastDay    int
 )
 
 type botConfig struct {
@@ -74,13 +77,31 @@ func processTextMessage(message *tgbot.Message) {
 }
 
 func sendForesight(message *tgbot.Message) {
-	foresight := foresights[rand.Intn(len(foresights))]
+	foresightMessage := fmt.Sprintf("_Ваше передбачення на сьогодні:_\n*%s*", getForesight(message.From))
 
 	bot.SendMessage(tgbot.SendMessageConfig{
 		ChatID:    tgbot.ChatID(message.Chat.ID),
-		Text:      foresight,
+		Text:      foresightMessage,
 		ParseMode: tgbot.ParseModeMarkdown(),
 	})
+}
+
+func getForesight(user *tgbot.User) string {
+	currentDay := time.Now().Day()
+	if currentDay != lastDay {
+		userMap = map[int]int{}
+		lastDay = currentDay
+	}
+
+	foresightIndex, ok := userMap[user.ID]
+	if ok {
+		return foresights[foresightIndex]
+	}
+
+	randomIndex := rand.Intn(len(foresights))
+	userMap[user.ID] = randomIndex
+
+	return foresights[randomIndex]
 }
 
 func checkError(e error) {
