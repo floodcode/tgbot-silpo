@@ -89,7 +89,8 @@ func main() {
 }
 
 func startBot() {
-	bot, err := tgbot.New(botConfig.Token)
+	var err error
+	bot, err = tgbot.New(botConfig.Token)
 	checkError(err)
 
 	botUser, err = bot.GetMe()
