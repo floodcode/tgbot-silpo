@@ -5,50 +5,136 @@ import (
 	"fmt"
 	"io/ioutil"
 	"math/rand"
+	"os"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/floodcode/tgbot"
 )
 
-var (
-	bot        tgbot.TelegramBot
-	botUser    tgbot.User
-	foresights = []string{}
-	userMap    = map[int]int{}
-	lastDay    int
+const (
+	configPath         = "config.json"
+	foresightsPath     = "foresights"
+	userForesightsPath = "user-foresights.json"
 )
 
-type botConfig struct {
+var (
+	bot                 tgbot.TelegramBot
+	botUser             tgbot.User
+	botConfig           BotConfig
+	foresights          = []string{}
+	userForesights      = UserForesights{UserMapping: UserMapping{}}
+	userForesightsMutex = &sync.Mutex{}
+)
+
+type UserForesights struct {
+	LastDay     int         `json:"last_day"`
+	UserMapping UserMapping `json:"user_mapping"`
+}
+
+type BotConfig struct {
 	Token string `json:"token"`
 }
 
+type UserMapping map[int]int
+
+func (m UserMapping) MarshalJSON() ([]byte, error) {
+	resultMap := map[string]string{}
+	for key, value := range m {
+		stringKey := strconv.Itoa(key)
+		stringValue := strconv.Itoa(value)
+		resultMap[stringKey] = stringValue
+	}
+
+	return json.Marshal(resultMap)
+}
+
+func (m UserMapping) UnmarshalJSON(b []byte) error {
+	mapping := map[string]string{}
+	err := json.Unmarshal(b, &mapping)
+	if err != nil {
+		return err
+	}
+
+	for key, value := range mapping {
+		numericKey, err := strconv.Atoi(key)
+		if err != nil {
+			return err
+		}
+
+		numericValue, err := strconv.Atoi(value)
+		if err != nil {
+			return err
+		}
+
+		m[numericKey] = numericValue
+	}
+
+	return nil
+}
+
 func main() {
+	// rand is used to renerate random foresights
 	rand.Seed(time.Now().Unix())
 
-	content, err := ioutil.ReadFile("foresights")
-	checkError(err)
+	loadForesights()
+	loadConfig()
+	loadData()
+	saveData()
+	startBot()
+}
 
-	foresights = strings.Split(string(content), "\n")
-
-	configData, err := ioutil.ReadFile("config.json")
-	checkError(err)
-
-	var config botConfig
-	err = json.Unmarshal(configData, &config)
-	checkError(err)
-
-	bot, err = tgbot.New(config.Token)
+func startBot() {
+	bot, err := tgbot.New(botConfig.Token)
 	checkError(err)
 
 	botUser, err = bot.GetMe()
 	checkError(err)
 
-	bot.Poll(tgbot.PollConfig{
+	err = bot.Poll(tgbot.PollConfig{
 		Delay:    100,
 		Callback: updatesCallback,
 	})
+
+	checkError(err)
+}
+
+func loadForesights() {
+	content, err := ioutil.ReadFile(foresightsPath)
+	checkError(err)
+
+	foresights = strings.Split(string(content), "\n")
+}
+
+func loadConfig() {
+	configData, err := ioutil.ReadFile(configPath)
+	checkError(err)
+
+	err = json.Unmarshal(configData, &botConfig)
+	checkError(err)
+}
+
+func loadData() {
+	if _, err := os.Stat(userForesightsPath); os.IsNotExist(err) {
+		saveData()
+	}
+
+	configData, err := ioutil.ReadFile(userForesightsPath)
+	checkError(err)
+
+	err = json.Unmarshal(configData, &userForesights)
+	checkError(err)
+}
+
+func saveData() {
+	userForesightsMutex.Lock()
+	jsonData, _ := json.Marshal(userForesights)
+	err := ioutil.WriteFile(userForesightsPath, jsonData, 0644)
+	checkError(err)
+	userForesightsMutex.Unlock()
 }
 
 func updatesCallback(updates []tgbot.Update) {
@@ -88,18 +174,20 @@ func sendForesight(message *tgbot.Message) {
 
 func getForesight(user *tgbot.User) string {
 	currentDay := time.Now().Day()
-	if currentDay != lastDay {
-		userMap = map[int]int{}
-		lastDay = currentDay
+	if currentDay != userForesights.LastDay {
+		userForesights.UserMapping = map[int]int{}
+		userForesights.LastDay = currentDay
+		saveData()
 	}
 
-	foresightIndex, ok := userMap[user.ID]
+	foresightIndex, ok := userForesights.UserMapping[user.ID]
 	if ok {
 		return foresights[foresightIndex]
 	}
 
 	randomIndex := rand.Intn(len(foresights))
-	userMap[user.ID] = randomIndex
+	userForesights.UserMapping[user.ID] = randomIndex
+	saveData()
 
 	return foresights[randomIndex]
 }
