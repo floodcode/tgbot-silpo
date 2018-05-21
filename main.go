@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"math/rand"
 	"os"
 	"regexp"
@@ -133,7 +134,7 @@ func saveData() {
 	userForesightsMutex.Lock()
 	jsonData, _ := json.Marshal(userForesights)
 	err := ioutil.WriteFile(userForesightsPath, jsonData, 0644)
-	checkError(err)
+	logError(err)
 	userForesightsMutex.Unlock()
 }
 
@@ -165,11 +166,13 @@ func processTextMessage(message *tgbot.Message) {
 func sendForesight(message *tgbot.Message) {
 	foresightMessage := fmt.Sprintf("_Ваше передбачення на сьогодні:_\n*%s*", getForesight(message.From))
 
-	bot.SendMessage(tgbot.SendMessageConfig{
+	_, err := bot.SendMessage(tgbot.SendMessageConfig{
 		ChatID:    tgbot.ChatID(message.Chat.ID),
 		Text:      foresightMessage,
 		ParseMode: tgbot.ParseModeMarkdown(),
 	})
+
+	logError(err)
 }
 
 func getForesight(user *tgbot.User) string {
@@ -190,6 +193,12 @@ func getForesight(user *tgbot.User) string {
 	saveData()
 
 	return foresights[randomIndex]
+}
+
+func logError(e error) {
+	if e != nil {
+		log.Println(e)
+	}
 }
 
 func checkError(e error) {
