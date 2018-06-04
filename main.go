@@ -4,15 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"math/rand"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/floodcode/tbf"
 	"github.com/floodcode/tgbot"
 )
 
@@ -23,9 +22,6 @@ const (
 )
 
 var (
-	bot                 tgbot.TelegramBot
-	botUser             tgbot.User
-	botConfig           BotConfig
 	foresights          = []string{}
 	userForesights      = UserForesights{UserMapping: UserMapping{}}
 	userForesightsMutex = &sync.Mutex{}
@@ -38,6 +34,7 @@ type UserForesights struct {
 
 type BotConfig struct {
 	Token string `json:"token"`
+	Delay int    `json:"delay"`
 }
 
 type UserMapping map[int]int
@@ -82,26 +79,29 @@ func main() {
 	rand.Seed(time.Now().Unix())
 
 	loadForesights()
-	loadConfig()
 	loadData()
 	saveData()
-	startBot()
+
+	configData, err := ioutil.ReadFile(configPath)
+	checkError(err)
+
+	var config BotConfig
+	err = json.Unmarshal(configData, &config)
+	checkError(err)
+
+	bot, err := tbf.New(config.Token)
+	checkError(err)
+
+	bot.AddRoute("silpo", silpoAction)
+
+	err = bot.Poll(tbf.PollConfig{
+		Delay: config.Delay,
+	})
 }
 
-func startBot() {
-	var err error
-	bot, err = tgbot.New(botConfig.Token)
-	checkError(err)
-
-	botUser, err = bot.GetMe()
-	checkError(err)
-
-	err = bot.Poll(tgbot.PollConfig{
-		Delay:    250,
-		Callback: updatesCallback,
-	})
-
-	checkError(err)
+func silpoAction(req tbf.Request) {
+	foresight := getForesight(req.Message.From)
+	req.QuickMessageMD(fmt.Sprintf("_Ваше передбачення на сьогодні:_\n*%s*", foresight))
 }
 
 func loadForesights() {
@@ -109,14 +109,6 @@ func loadForesights() {
 	checkError(err)
 
 	foresights = strings.Split(string(content), "\n")
-}
-
-func loadConfig() {
-	configData, err := ioutil.ReadFile(configPath)
-	checkError(err)
-
-	err = json.Unmarshal(configData, &botConfig)
-	checkError(err)
 }
 
 func loadData() {
@@ -134,46 +126,8 @@ func loadData() {
 func saveData() {
 	userForesightsMutex.Lock()
 	jsonData, _ := json.Marshal(userForesights)
-	err := ioutil.WriteFile(userForesightsPath, jsonData, 0644)
-	logError(err)
+	ioutil.WriteFile(userForesightsPath, jsonData, 0644)
 	userForesightsMutex.Unlock()
-}
-
-func updatesCallback(updates []tgbot.Update) {
-	for _, update := range updates {
-		if update.Message == nil || len(update.Message.Text) == 0 {
-			continue
-		}
-
-		processTextMessage(update.Message)
-	}
-}
-
-func processTextMessage(message *tgbot.Message) {
-	var cmdMatch, _ = regexp.Compile(`^\/([a-zA-Z_]+)(?:@` + botUser.Username + `)?(?:\s(.+)|)$`)
-	match := cmdMatch.FindStringSubmatch(message.Text)
-
-	if match == nil {
-		return
-	}
-
-	command := strings.ToLower(match[1])
-
-	if command == "silpo" {
-		sendForesight(message)
-	}
-}
-
-func sendForesight(message *tgbot.Message) {
-	foresightMessage := fmt.Sprintf("_Ваше передбачення на сьогодні:_\n*%s*", getForesight(message.From))
-
-	_, err := bot.SendMessage(tgbot.SendMessageConfig{
-		ChatID:    tgbot.ChatID(message.Chat.ID),
-		Text:      foresightMessage,
-		ParseMode: tgbot.ParseModeMarkdown(),
-	})
-
-	logError(err)
 }
 
 func getForesight(user *tgbot.User) string {
@@ -194,12 +148,6 @@ func getForesight(user *tgbot.User) string {
 	saveData()
 
 	return foresights[randomIndex]
-}
-
-func logError(e error) {
-	if e != nil {
-		log.Println(e)
-	}
 }
 
 func checkError(e error) {
